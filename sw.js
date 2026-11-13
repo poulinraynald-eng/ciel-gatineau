@@ -1,6 +1,6 @@
 /* Service worker : garde une copie de la page pour l'utiliser sans Wi-Fi.
    Strategie : on sert la copie tout de suite, et on la rafraichit en arriere-plan quand le reseau repond. */
-var CACHE = 'ciel-v4';
+var CACHE = 'ciel-v5';
 self.addEventListener('install', function (event) {
   event.waitUntil(caches.open(CACHE).then(function (cache) {
     return cache.addAll(['./', './index.html', './icon-180.png', './icon-152.png']);
@@ -12,18 +12,28 @@ self.addEventListener('activate', function (event) {
   }).then(function () { return self.clients.claim(); }));
 });
 self.addEventListener('fetch', function (event) {
-  if (event.request.method !== 'GET') { return; }
+  var req = event.request;
+  if (req.method !== 'GET') { return; }
   /* Les demandes vers d'autres sites (meteo) passent directement, sans copie locale */
-  if (event.request.url.indexOf(self.location.origin) !== 0) { return; }
+  if (req.url.indexOf(self.location.origin) !== 0) { return; }
+  /* Cle de la copie : l'adresse sans ses parametres, pour ne jamais garder deux copies de la meme page */
+  var key = req.url.split('#')[0].split('?')[0];
+  var offline = self.navigator && self.navigator.onLine === false;
+  /* Hors ligne declare : on sert la copie sans toucher au reseau */
+  var fresh = offline ? null : fetch(req).then(function (resp) {
+    if (resp && resp.status === 200 && resp.type === 'basic') {
+      var copy = resp.clone();
+      return caches.open(CACHE).then(function (cache) { return cache.put(key, copy); }).then(function () { return resp; });
+    }
+    return resp;
+  });
+  /* On garde le service worker en vie jusqu'a la fin du rafraichissement */
+  if (fresh) { event.waitUntil(fresh.then(function () { return null; }, function () { return null; })); }
   event.respondWith(caches.open(CACHE).then(function (cache) {
-    return cache.match(event.request, { ignoreSearch: true }).then(function (cached) {
-      /* Hors ligne declare : on sert la copie sans toucher au reseau */
-      if (cached && self.navigator && self.navigator.onLine === false) { return cached; }
-      var fresh = fetch(event.request).then(function (resp) {
-        if (resp && resp.status === 200 && resp.type === 'basic') { cache.put(event.request, resp.clone()); }
-        return resp;
-      }).catch(function () { return cached; });
-      return cached || fresh;
-    });
+    return cache.match(key);
+  }).then(function (cached) {
+    if (cached) { return cached; }
+    if (fresh) { return fresh; }
+    return new Response('Hors ligne', { status: 503, statusText: 'Hors ligne' });
   }));
 });
