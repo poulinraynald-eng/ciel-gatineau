@@ -7,6 +7,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Télescope">
 <meta name="format-detection" content="telephone=no">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="apple-touch-icon" sizes="152x152" href="icon-152.png">
+<link rel="icon" type="image/png" href="icon-180.png">
 <title>Compagnon de télescope</title>
 <style>
 /* Disposition : en-tete, zone de contenu defilante, barre d'onglets en bas.
@@ -603,7 +606,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
 /* Compagnon de telescope - application. Syntaxe ES5 uniquement (Safari iOS 12). */
 (function () {
   'use strict';
-  var VERSION = '1.0.0';
+  var VERSION = '1.0.1';
   var FOCALE = 2032; /* NexStar 8SE, en mm */
   var CHAMP_APPARENT = 50; /* degres, valeur typique d'un oculaire Plossl */
 
@@ -1459,7 +1462,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
       else if (S.view === 'soir') { var st = $('main').scrollTop; render(); $('main').scrollTop = st; }
     }, 60000);
     render();
-    if ('serviceWorker' in navigator && window.location.protocol === 'https:') {
+    if ('serviceWorker' in navigator && window.location.protocol === 'https:' && navigator.onLine !== false) {
       try { navigator.serviceWorker.register('sw.js').then(function () {}, function () {}); } catch (e2) { /* sans objet */ }
     }
   }
