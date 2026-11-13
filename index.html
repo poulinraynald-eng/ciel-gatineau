@@ -243,6 +243,25 @@ textarea { resize: vertical; }
 .lg-main p { margin: 6px 0 0; white-space: pre-wrap; }
 .logrow .btn { margin: 0; -webkit-flex: 0 0 auto; flex: 0 0 auto; }
 
+.wx-nights { display: -webkit-flex; display: flex; -webkit-flex-wrap: wrap; flex-wrap: wrap; margin: 0 -6px 4px; }
+.wx-night {
+  -webkit-flex: 1 1 200px; flex: 1 1 200px;
+  background: var(--surface); border: 1px solid var(--line); border-left-width: 6px; border-radius: 12px;
+  padding: 12px 14px; margin: 0 6px 12px;
+}
+.wx-night.v1 { border-left-color: var(--good); }
+.wx-night.v2 { border-left-color: var(--warn); }
+.wx-night.v3 { border-left-color: var(--hard); }
+.wx-night span, .wx-night strong { display: block; }
+.wx-when { font-size: 13px; color: var(--muted); }
+.wx-night strong { font-size: 19px; margin: 2px 0; }
+.wx-sub { font-size: 15px; }
+.wx-num { font-size: 14px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.wx-tbl td { white-space: nowrap; }
+.wx-bar { display: inline-block; width: 70px; height: 9px; margin-right: 8px; vertical-align: 0; background: var(--chip); border-radius: 5px; overflow: hidden; }
+.wx-bar span { display: block; height: 9px; background: var(--muted); }
+.chip.warn { white-space: normal; }
+
 @media (max-width: 520px) {
   body { font-size: 16px; }
   header.top { padding: 8px 12px; }
@@ -606,7 +625,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
 /* Compagnon de telescope - application. Syntaxe ES5 uniquement (Safari iOS 12). */
 (function () {
   'use strict';
-  var VERSION = '1.0.1';
+  var VERSION = '1.1.0';
   var FOCALE = 2032; /* NexStar 8SE, en mm */
   var CHAMP_APPARENT = 50; /* degres, valeur typique d'un oculaire Plossl */
 
@@ -784,6 +803,142 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     }
   }
 
+
+  /* ---------- Meteo (Open-Meteo, sans cle) ---------- */
+  var WX = sget('meteo', null);
+  var wx = { state: 'idle', err: '', lastTry: 0 };
+  function wxUrl() {
+    return 'https://api.open-meteo.com/v1/forecast?latitude=' + S.site.lat + '&longitude=' + S.site.lon +
+      '&hourly=cloud_cover,precipitation_probability,precipitation,temperature_2m,dew_point_2m,wind_speed_10m' +
+      '&timeformat=unixtime&forecast_days=4';
+  }
+  function wxValid(d) {
+    var h = d && d.hourly;
+    return !!(h && h.time && h.time.length > 12 && h.cloud_cover && h.cloud_cover.length === h.time.length);
+  }
+  function wxFetch(manual) {
+    if (wx.state === 'loading') { return; }
+    if (navigator.onLine === false) {
+      if (manual) { wx.state = 'error'; wx.err = 'L\'iPad n\'est pas connecté à Internet.'; refreshSoir(); }
+      return;
+    }
+    wx.state = 'loading'; wx.err = ''; wx.lastTry = Date.now();
+    var done = false;
+    function fail(msg) {
+      if (done) { return; }
+      done = true; wx.state = 'error'; wx.err = msg; refreshSoir();
+    }
+    try {
+      var x = new XMLHttpRequest();
+      x.open('GET', wxUrl(), true);
+      x.timeout = 15000;
+      x.onload = function () {
+        if (done) { return; }
+        if (x.status !== 200) { fail('Le service météo a répondu par une erreur (' + x.status + ').'); return; }
+        var d = null;
+        try { d = JSON.parse(x.responseText); } catch (e) { d = null; }
+        if (!wxValid(d)) { fail('La réponse du service météo est illisible.'); return; }
+        var h = d.hourly;
+        WX = { t: Date.now(), lat: S.site.lat, lon: S.site.lon, time: h.time, cc: h.cloud_cover,
+          pp: h.precipitation_probability || [], pr: h.precipitation || [], te: h.temperature_2m || [],
+          dp: h.dew_point_2m || [], wi: h.wind_speed_10m || [] };
+        sset('meteo', WX);
+        done = true; wx.state = 'idle'; refreshSoir();
+      };
+      x.onerror = function () { fail('Le service météo est injoignable pour le moment.'); };
+      x.ontimeout = function () { fail('Le service météo n\'a pas répondu à temps.'); };
+      x.send();
+    } catch (e2) { fail('La demande météo n\'a pas pu partir.'); }
+    if (manual) { refreshSoir(); }
+  }
+  function wxAuto() {
+    var stale = !WX || (Date.now() - WX.t) > 3600000 || WX.lat !== S.site.lat || WX.lon !== S.site.lon;
+    if (stale && wx.state !== 'loading' && (Date.now() - wx.lastTry) > 300000) { wxFetch(false); }
+  }
+  function refreshSoir() {
+    if (S.view !== 'soir' || !$('main')) { return; }
+    var st = $('main').scrollTop; render(); $('main').scrollTop = st;
+  }
+  function isNum(v) { return typeof v === 'number' && !isNaN(v); }
+  /* Resume de la meteo entre deux instants : moyennes et extremes sur les heures de la fenetre */
+  function wxWindow(t0, t1) {
+    if (!WX) { return null; }
+    var n = 0, cc = 0, pp = -1, te = 99, sp = 99, wi = -1, rows = [];
+    for (var i = 0; i < WX.time.length; i++) {
+      var ms = WX.time[i] * 1000;
+      if (ms < t0 - 1800000 || ms > t1) { continue; }
+      if (!isNum(WX.cc[i])) { continue; }
+      n++; cc += WX.cc[i];
+      if (isNum(WX.pp[i]) && WX.pp[i] > pp) { pp = WX.pp[i]; }
+      if (isNum(WX.te[i]) && WX.te[i] < te) { te = WX.te[i]; }
+      if (isNum(WX.te[i]) && isNum(WX.dp[i]) && (WX.te[i] - WX.dp[i]) < sp) { sp = WX.te[i] - WX.dp[i]; }
+      if (isNum(WX.wi[i]) && WX.wi[i] > wi) { wi = WX.wi[i]; }
+      rows.push({ d: new Date(ms), cc: WX.cc[i], pp: WX.pp[i], te: WX.te[i], wi: WX.wi[i], sp: isNum(WX.te[i]) && isNum(WX.dp[i]) ? WX.te[i] - WX.dp[i] : null });
+    }
+    if (!n) { return null; }
+    var avg = cc / n;
+    var v;
+    if (pp >= 50) { v = [3, 'Pluie ou neige probable']; }
+    else if (avg <= 25 && pp < 30) { v = [1, 'Ciel dégagé']; }
+    else if (avg <= 60) { v = [2, 'Partiellement nuageux']; }
+    else { v = [3, 'Ciel couvert']; }
+    return { n: n, cloud: avg, pp: pp, tmin: te === 99 ? null : te, spread: sp === 99 ? null : sp, wind: wi, verdict: v, rows: rows };
+  }
+  function wxNights() {
+    var out = [];
+    var today = new Date();
+    for (var k = 0; k < 3; k++) {
+      var base = k === 0 ? today : new Date(today.getFullYear(), today.getMonth(), today.getDate() + k, 12, 0, 0);
+      var n = CielAstro.night(base);
+      var t0 = n.start.getTime();
+      var t1 = Math.min(n.end.getTime(), t0 + 5 * 3600000);
+      var w = wxWindow(t0, t1);
+      if (w) { w.start = n.start; w.k = k; out.push(w); }
+    }
+    return out;
+  }
+  function renderMeteo() {
+    var h = '<h2>Météo pour observer</h2>';
+    var nights = [];
+    try { nights = wxNights(); } catch (e) { nights = []; }
+    if (!nights.length) {
+      h += '<div class="card"><p class="txt">' + (wx.state === 'loading' ? 'Recherche de la prévision…' :
+        (wx.err ? esc(wx.err) : 'Aucune prévision en mémoire. Il faut une connexion Internet pour l\'obtenir.')) + '</p>';
+      h += '<div class="row-btn"><button type="button" class="btn" data-act="wx">Obtenir la prévision</button></div></div>';
+      return h;
+    }
+    var LBL = ['Ce soir', 'Demain soir', 'Après-demain soir'];
+    var VER = ['', 'Bonne soirée pour observer', 'Soirée passable : vise les cibles brillantes', 'Mauvaise soirée pour observer'];
+    h += '<div class="wx-nights">';
+    for (var i = 0; i < nights.length; i++) {
+      var w = nights[i];
+      h += '<div class="wx-night v' + w.verdict[0] + '"><span class="wx-when">' + LBL[w.k] + ' · ' + esc(fDate(w.start)) + '</span><strong>' + w.verdict[1] + '</strong>';
+      h += '<span class="wx-sub">' + VER[w.verdict[0]] + '</span>';
+      h += '<span class="wx-num">Nuages ' + Math.round(w.cloud) + ' %' + (w.pp >= 0 ? ' · précipitations ' + Math.round(w.pp) + ' %' : '') + (w.tmin !== null ? ' · ' + num(w.tmin, 0) + ' °C' : '') + '</span></div>';
+    }
+    h += '</div>';
+    var t = nights[0].k === 0 ? nights[0] : null;
+    if (t) {
+      var flags = '';
+      if (t.spread !== null && t.spread <= 2) { flags += '<span class="chip warn">Risque de buée élevé : mets le pare-buée</span>'; }
+      if (t.tmin !== null && t.tmin < 0) { flags += '<span class="chip warn">Sous zéro : garde l\'iPad au chaud entre deux regards</span>'; }
+      if (t.wind >= 30) { flags += '<span class="chip warn">Vent fort : l\'image va trembler</span>'; }
+      if (flags) { h += '<p class="flags">' + flags + '</p>'; }
+      h += '<div class="card"><table class="tbl wx-tbl"><thead><tr><th>Heure</th><th>Nuages</th><th>Précipitations</th><th>Température</th><th>Vent</th></tr></thead><tbody>';
+      for (var j = 0; j < t.rows.length; j++) {
+        var r = t.rows[j];
+        h += '<tr><td>' + esc(fHeure(r.d)) + '</td><td><span class="wx-bar"><span style="width:' + Math.max(0, Math.min(100, Math.round(r.cc))) + '%"></span></span>' + Math.round(r.cc) + ' %</td><td>' + (isNum(r.pp) ? Math.round(r.pp) + ' %' : '—') + '</td><td>' + (isNum(r.te) ? num(r.te, 0) + ' °C' : '—') + '</td><td>' + (isNum(r.wi) ? Math.round(r.wi) + ' km/h' : '—') + '</td></tr>';
+      }
+      h += '</tbody></table></div>';
+    }
+    var age = Math.round((Date.now() - WX.t) / 3600000);
+    h += '<p class="small">Prévision obtenue ' + esc(fDateHeure(new Date(WX.t))) + (age >= 6 ? ' — elle date de ' + age + ' heures, actualise-la avant de te fier au verdict' : '') + '. ';
+    h += (wx.state === 'loading' ? 'Mise à jour en cours…' : (wx.err ? esc(wx.err) : '')) + '</p>';
+    h += '<div class="row-btn"><button type="button" class="btn small" data-act="wx">Actualiser la météo</button></div>';
+    h += '<p class="small">Source : Open-Meteo.com. Les nuages sont difficiles à prévoir heure par heure : jette toujours un coup d\'œil au ciel avant de sortir le matériel.</p>';
+    return h;
+  }
+
   /* ---------- Rendu : elements communs ---------- */
   var DIFF = ['', 'Facile', 'Moyenne', 'Difficile'];
   function chipDiff(d) { return '<span class="chip d' + d + '">' + DIFF[d] + '</span>'; }
@@ -841,6 +996,8 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     h += '<div class="fact"><span>Lune</span><strong>' + esc(mo.name) + ', ' + Math.round(mo.frac * 100) + ' %</strong></div>';
     h += '<div class="fact"><span>Lune dans le ciel</span><strong>' + esc(mo.alt > 0 ? 'levée, ' + CielAstro.direction(mo.az) : (mo.rise ? 'se lève à ' + fHeure(mo.rise) : 'couchée')) + '</strong></div>';
     h += '</div>';
+    h += renderMeteo();
+    wxAuto();
     if (c.moonBother) {
       h += '<p class="banner">La Lune est brillante ce soir : les galaxies et les nébuleuses pâles seront délavées. Mise sur la Lune, les planètes, les étoiles doubles et les amas.</p>';
     }
@@ -1299,7 +1456,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     }
     h += '</div>';
     h += '<div class="card form"><h3>À propos</h3><p class="txt">Compagnon de télescope, version ' + VERSION + '. Conçu pour un Celestron NexStar 8SE avec StarSense AutoAlign, sur un iPad Air sous iOS 12.</p>';
-    h += '<p class="small">Positions calculées avec Astronomy Engine (Don Cross, licence MIT). Étoiles, constellations et objets Messier tirés de d3-celestial (Olaf Frohn, licence BSD). Procédures de la manette d\'après le manuel Celestron StarSense AutoAlign. Les séparations des étoiles doubles sont approximatives.</p></div>';
+    h += '<p class="small">Positions calculées avec Astronomy Engine (Don Cross, licence MIT). Étoiles, constellations et objets Messier tirés de d3-celestial (Olaf Frohn, licence BSD). Prévisions météo d\'Open-Meteo.com (licence CC BY 4.0). Procédures de la manette d\'après le manuel Celestron StarSense AutoAlign. Les séparations des étoiles doubles sont approximatives.</p></div>';
     h += '</div>';
     return h;
   }
@@ -1316,6 +1473,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     var sw = 'serviceWorker' in navigator;
     r.push(['Mode hors ligne', sw ? (navigator.serviceWorker.controller ? 'actif' : 'disponible, pas encore actif') : 'non pris en charge', sw]);
     r.push(['Connexion', navigator.onLine === false ? 'hors ligne' : 'en ligne', true]);
+    r.push(['Météo en mémoire', WX ? 'oui, obtenue ' + fDateHeure(new Date(WX.t)) : 'aucune', !!WX]);
     r.push(['Ouvert depuis l\'écran d\'accueil', navigator.standalone ? 'oui' : 'non', true]);
     r.push(['Écran', window.innerWidth + ' × ' + window.innerHeight + ' points, densité ' + (window.devicePixelRatio || 1), true]);
     /* vitesse de calcul et de dessin */
@@ -1436,6 +1594,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
       S.site = { lat: la, lon: lo }; sset('site', S.site); cache.key = null; render(); return;
     }
     if (a === 'diag') { runDiag(); render(); return; }
+    if (a === 'wx') { wxFetch(true); return; }
   }
 
   function start() {
