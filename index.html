@@ -257,6 +257,7 @@ textarea { resize: vertical; }
 .wx-night strong { font-size: 19px; margin: 2px 0; }
 .wx-sub { font-size: 15px; }
 .wx-num { font-size: 14px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.wx-best { font-size: 15px; font-weight: 600; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .wx-tbl td { white-space: nowrap; }
 .wx-bar { display: inline-block; width: 70px; height: 9px; margin-right: 8px; vertical-align: 0; background: var(--chip); border-radius: 5px; overflow: hidden; }
 .wx-bar span { display: block; height: 9px; background: var(--muted); }
@@ -625,7 +626,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
 /* Compagnon de telescope - application. Syntaxe ES5 uniquement (Safari iOS 12). */
 (function () {
   'use strict';
-  var VERSION = '1.1.0';
+  var VERSION = '1.2.0';
   var FOCALE = 2032; /* NexStar 8SE, en mm */
   var CHAMP_APPARENT = 50; /* degres, valeur typique d'un oculaire Plossl */
 
@@ -884,6 +885,30 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     else { v = [3, 'Ciel couvert']; }
     return { n: n, cloud: avg, pp: pp, tmin: te === 99 ? null : te, spread: sp === 99 ? null : sp, wind: wi, verdict: v, rows: rows };
   }
+  /* Plus longue suite d'heures favorables entre deux instants.
+     Niveau 1 : ciel degage (nuages <= 30 %, precipitations < 30 %). Niveau 2 : eclaircies (nuages <= 60 %). */
+  function wxBest(t0, t1) {
+    if (!WX) { return null; }
+    var levels = [[30, 30], [60, 50]];
+    for (var L = 0; L < levels.length; L++) {
+      var best = null, cur = null;
+      for (var i = 0; i < WX.time.length; i++) {
+        var ms = WX.time[i] * 1000;
+        if (ms < t0 - 1800000 || ms > t1) { continue; }
+        var ok = isNum(WX.cc[i]) && WX.cc[i] <= levels[L][0] && !(isNum(WX.pp[i]) && WX.pp[i] >= levels[L][1]);
+        if (ok) {
+          if (!cur) { cur = { from: ms, n: 0, sum: 0 }; }
+          cur.n++; cur.sum += WX.cc[i]; cur.to = ms + 3600000;
+          if (!best || cur.n > best.n) { best = { from: cur.from, to: cur.to, n: cur.n, sum: cur.sum }; }
+        } else { cur = null; }
+      }
+      if (best && best.n >= 2) {
+        return { level: L + 1, from: new Date(best.from), to: new Date(Math.min(best.to, t1)), cloud: best.sum / best.n, hours: best.n,
+          all: best.from <= t0 + 3600000 && best.to >= t1 - 3600000 };
+      }
+    }
+    return null;
+  }
   function wxNights() {
     var out = [];
     var today = new Date();
@@ -893,7 +918,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
       var t0 = n.start.getTime();
       var t1 = Math.min(n.end.getTime(), t0 + 5 * 3600000);
       var w = wxWindow(t0, t1);
-      if (w) { w.start = n.start; w.k = k; out.push(w); }
+      if (w) { w.start = n.start; w.k = k; w.best = wxBest(t0, n.end.getTime()); out.push(w); }
     }
     return out;
   }
@@ -914,7 +939,13 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
       var w = nights[i];
       h += '<div class="wx-night v' + w.verdict[0] + '"><span class="wx-when">' + LBL[w.k] + ' · ' + esc(fDate(w.start)) + '</span><strong>' + w.verdict[1] + '</strong>';
       h += '<span class="wx-sub">' + VER[w.verdict[0]] + '</span>';
-      h += '<span class="wx-num">Nuages ' + Math.round(w.cloud) + ' %' + (w.pp >= 0 ? ' · précipitations ' + Math.round(w.pp) + ' %' : '') + (w.tmin !== null ? ' · ' + num(w.tmin, 0) + ' °C' : '') + '</span></div>';
+      h += '<span class="wx-num">Nuages ' + Math.round(w.cloud) + ' %' + (w.pp >= 0 ? ' · précipitations ' + Math.round(w.pp) + ' %' : '') + (w.tmin !== null ? ' · ' + num(w.tmin, 0) + ' °C' : '') + '</span>';
+      if (w.best) {
+        h += '<span class="wx-best">' + (w.best.level === 1 ? 'Meilleure fenêtre' : 'Éclaircies possibles') + (w.best.all ? ' : toute la nuit' : ' : de ' + esc(fHeure(w.best.from)) + ' à ' + esc(fHeure(w.best.to))) + ' (nuages ' + Math.round(w.best.cloud) + ' %)</span>';
+      } else {
+        h += '<span class="wx-best">Aucune éclaircie prévue de la nuit</span>';
+      }
+      h += '</div>';
     }
     h += '</div>';
     var t = nights[0].k === 0 ? nights[0] : null;
