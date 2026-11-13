@@ -588,7 +588,14 @@ var CielAstro = (function () {
     var end = searchSunAlt(+1, start, -12);
     if (!end) { end = new Date(start.getTime() + 8 * 3600000); }
     var info = { sunAlt: alt, dark: dark, start: start, end: end };
-    info.sunset = dark ? null : riseSet('Sun', -1, date);
+    /* Coucher du Soleil de la soiree concernee. De jour : le prochain. Au crepuscule ou de nuit :
+       celui qui vient d'avoir lieu, cherche a partir du midi local precedent. */
+    var base = date;
+    if (alt <= -0.83) {
+      base = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0);
+      if (date.getHours() < 12) { base = new Date(base.getTime() - 86400000); }
+    }
+    info.sunset = riseSet('Sun', -1, base);
     info.astroDusk = alt <= -18 ? null : searchSunAlt(-1, date, -18);
     info.sunrise = riseSet('Sun', +1, start);
     return info;
@@ -627,7 +634,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
 /* Compagnon de telescope - application. Syntaxe ES5 uniquement (Safari iOS 12). */
 (function () {
   'use strict';
-  var VERSION = '1.3.0';
+  var VERSION = '1.3.1';
   var FOCALE = 2032; /* NexStar 8SE, en mm */
   var CHAMP_APPARENT = 50; /* degres, valeur typique d'un oculaire Plossl */
 
