@@ -1,6 +1,6 @@
 /* Service worker : garde une copie de la page pour l'utiliser sans Wi-Fi.
    Strategie : on sert la copie tout de suite, et on la rafraichit en arriere-plan quand le reseau repond. */
-var CACHE = 'ciel-v8';
+var CACHE = 'ciel-v9';
 self.addEventListener('install', function (event) {
   event.waitUntil(caches.open(CACHE).then(function (cache) {
     return cache.addAll(['./', './index.html', './icon-180.png', './icon-152.png']);

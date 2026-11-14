@@ -83,8 +83,8 @@ nav.tabs {
 .tab {
   -webkit-flex: 1 1 0; flex: 1 1 0;
   min-width: 0;
-  padding: 14px 4px 15px;
-  font: inherit; font-size: 14px; font-weight: 600;
+  padding: 14px 2px 15px;
+  font: inherit; font-size: 13.5px; font-weight: 600;
   color: var(--muted);
   background: none; border: 0; border-top: 3px solid transparent;
   cursor: pointer;
@@ -185,6 +185,7 @@ body[data-mode="nuit"] .btn.danger { color: #000000; }
 
 .map-box { height: 56vh; min-height: 340px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: var(--surface); }
 #sky { display: block; }
+.pt-box { height: 60vh; min-height: 360px; }
 .map-tools { margin-top: 10px; }
 .map-legend { font-size: 14px; color: var(--muted); }
 .lg { display: inline-block; width: 11px; height: 11px; margin: 0 5px 0 10px; vertical-align: -1px; border: 2px solid #2f9f94; border-radius: 50%; }
@@ -621,7 +622,31 @@ var CielAstro = (function () {
     return DIRS[Math.round(az / 22.5) % 16];
   }
 
+  /* Vecteur unitaire d'un point du ciel dans le repere local : x = est, y = nord, z = zenith */
+  function enu(alt, az) {
+    var a = alt * RAD, z = az * RAD, c = Math.cos(a);
+    return [c * Math.sin(z), c * Math.cos(z), Math.sin(a)];
+  }
+  /* Orientation de l'appareil (angles du navigateur, en degres) -> trois axes dans le repere local :
+     f = direction visee par le dos de l'appareil, u = haut de l'ecran, r = droite de l'ecran.
+     alpha doit etre compte depuis le nord vrai. screenAngle = rotation de l'ecran (0, 90, -90, 180).
+     Matrice R = Rz(alpha) Rx(beta) Ry(gamma), convention du W3C. */
+  function deviceBasis(alpha, beta, gamma, screenAngle) {
+    var a = alpha * RAD, b = beta * RAD, g = gamma * RAD, t = (screenAngle || 0) * RAD;
+    var ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b), cg = Math.cos(g), sg = Math.sin(g);
+    var c1 = [ca * cg - sa * sb * sg, sa * cg + ca * sb * sg, -cb * sg];   /* axe x de l'appareil */
+    var c2 = [-sa * cb, ca * cb, sb];                                      /* axe y de l'appareil */
+    var c3 = [ca * sg + sa * sb * cg, sa * sg - ca * sb * cg, cb * cg];    /* axe z (sort de l'ecran) */
+    var st = Math.sin(t), ct = Math.cos(t);
+    return {
+      f: [-c3[0], -c3[1], -c3[2]],
+      u: [st * c1[0] + ct * c2[0], st * c1[1] + ct * c2[1], st * c1[2] + ct * c2[2]],
+      r: [ct * c1[0] - st * c2[0], ct * c1[1] - st * c2[1], ct * c1[2] - st * c2[2]]
+    };
+  }
+
   return {
+    enu: enu, deviceBasis: deviceBasis,
     setObserver: setObserver, matrix: matrix, fixedAltAz: fixedAltAz, bodyAltAz: bodyAltAz,
     sunAlt: sunAlt, night: night, moon: moon, direction: direction, riseSet: riseSet,
     site: function () { return site; }
@@ -634,7 +659,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
 /* Compagnon de telescope - application. Syntaxe ES5 uniquement (Safari iOS 12). */
 (function () {
   'use strict';
-  var VERSION = '1.3.3';
+  var VERSION = '1.4.0';
   var FOCALE = 2032; /* NexStar 8SE, en mm */
   var CHAMP_APPARENT = 50; /* degres, valeur typique d'un oculaire Plossl */
 
@@ -668,7 +693,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     confirmDel: null,
     diag: null
   };
-  var VIEWS = [['soir', 'Ce soir'], ['carte', 'Carte'], ['guide', 'Guide'], ['memo', 'Aide-mémoire'], ['carnet', 'Carnet'], ['reglages', 'Réglages']];
+  var VIEWS = [['soir', 'Ce soir'], ['carte', 'Carte'], ['pointer', 'Pointer'], ['guide', 'Guide'], ['memo', 'Aide-mémoire'], ['carnet', 'Carnet'], ['reglages', 'Réglages']];
   var valid = false;
   for (var vi = 0; vi < VIEWS.length; vi++) { if (VIEWS[vi][0] === S.view) { valid = true; } }
   if (!valid) { S.view = 'soir'; }
@@ -1387,6 +1412,314 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     });
   }
 
+  /* ---------- Vue : Pointer (le ciel suit l'orientation de l'appareil) ---------- */
+  var DECLINAISON = -13; /* nord magnetique a Ottawa-Gatineau : environ 13 degres a l'ouest du nord vrai */
+  var ori = { n: 0, alpha: null, beta: null, gamma: null, heading: null, acc: null, absolute: false, offset: null };
+  var PT = { fov: 62, user: 0, sel: null };
+  var ptCv = null, ptCtx = null, ptW = 0, ptH = 0, ptHits = [], ptCache = null, ptTimer = null, ptRaf = null;
+  function norm360(x) { x = x % 360; return x < 0 ? x + 360 : x; }
+  function onOrient(e, absoluteEvent) {
+    if (e.alpha === null || e.alpha === undefined || e.beta === null || e.beta === undefined) { return; }
+    if (ori.absolute && !absoluteEvent) { return; } /* une source absolue existe : on ignore la relative */
+    ori.n++;
+    ori.alpha = e.alpha; ori.beta = e.beta; ori.gamma = e.gamma || 0;
+    if (absoluteEvent || e.absolute === true) { ori.absolute = true; ori.offset = 0; return; }
+    if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) {
+      ori.heading = e.webkitCompassHeading;
+      ori.acc = typeof e.webkitCompassAccuracy === 'number' ? e.webkitCompassAccuracy : null;
+      /* La boussole n'est fiable que lorsque l'appareil est a peu pres a plat */
+      if (Math.abs(ori.beta) < 55 && Math.abs(ori.gamma) < 55 && !(ori.acc !== null && ori.acc < 0)) {
+        var target = norm360((360 - (ori.heading + DECLINAISON)) - ori.alpha);
+        if (ori.offset === null) { ori.offset = target; }
+        else {
+          var d = target - ori.offset;
+          if (d > 180) { d -= 360; } else if (d < -180) { d += 360; }
+          ori.offset = norm360(ori.offset + d * 0.08);
+        }
+      }
+    }
+  }
+  function screenAngle() {
+    if (typeof window.orientation === 'number') { return window.orientation; }
+    if (window.screen && window.screen.orientation && typeof window.screen.orientation.angle === 'number') { return window.screen.orientation.angle; }
+    return 0;
+  }
+  function ptBuild() {
+    var d = new Date();
+    var c = compute(d);
+    var rot = c.rot;
+    var i, h, j;
+    var out = { t: Date.now(), stars: [], lines: [], named: [], labels: [], items: [] };
+    for (i = 0; i < CIEL_DATA.stars.length; i++) {
+      var s = CIEL_DATA.stars[i];
+      if (s[2] > 4.7) { break; }
+      h = CielAstro.fixedAltAz(rot, s[0], s[1]);
+      if (h.alt < -1) { continue; }
+      var v = CielAstro.enu(h.alt, h.az);
+      out.stars.push(v[0], v[1], v[2], s[2], s[3]);
+    }
+    for (i = 0; i < CIEL_DATA.lines.length; i++) {
+      var seg = CIEL_DATA.lines[i], arr = [];
+      for (j = 0; j < seg.length; j += 2) {
+        h = CielAstro.fixedAltAz(rot, seg[j], seg[j + 1]);
+        var w = CielAstro.enu(h.alt, h.az);
+        arr.push(w[0], w[1], w[2]);
+      }
+      out.lines.push(arr);
+    }
+    for (i = 0; i < CIEL_DATA.named.length; i++) {
+      var ns = CIEL_DATA.named[i];
+      h = CielAstro.fixedAltAz(rot, ns[1], ns[2]);
+      if (h.alt < 0) { continue; }
+      out.named.push({ name: ns[0], v: CielAstro.enu(h.alt, h.az), mag: ns[3], alt: h.alt, az: h.az });
+    }
+    for (i = 0; i < CIEL_DATA.clabels.length; i++) {
+      var cl = CIEL_DATA.clabels[i];
+      h = CielAstro.fixedAltAz(rot, cl[1], cl[2]);
+      if (h.alt < 5) { continue; }
+      out.labels.push({ name: cl[0].toUpperCase(), v: CielAstro.enu(h.alt, h.az) });
+    }
+    for (i = 0; i < c.items.length; i++) {
+      var it = c.items[i];
+      if (it.alt < 0) { continue; }
+      out.items.push({ id: it.id, name: it.name, cat: it.cat, gk: it.gk, v: CielAstro.enu(it.alt, it.az) });
+    }
+    var sun = CielAstro.bodyAltAz('Sun', d, true);
+    if (sun.alt > -1) { out.sun = CielAstro.enu(sun.alt, sun.az); }
+    ptCache = out;
+  }
+  function dot(a, b0, b1, b2) { return a[0] * b0 + a[1] * b1 + a[2] * b2; }
+  function drawPointer() {
+    if (!ptCv || !ptCtx || !ptW) { return; }
+    if (!ptCache || Date.now() - ptCache.t > 30000) { ptBuild(); }
+    var P = PAL[S.mode], C = ptCache;
+    var x = ptCtx;
+    var F0 = '-apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif';
+    x.setTransform(dpr, 0, 0, dpr, 0, 0);
+    x.fillStyle = P.sky; x.fillRect(0, 0, ptW, ptH);
+    var has = ori.alpha !== null;
+    var alpha = has ? ori.alpha + (ori.offset === null ? 0 : ori.offset) + PT.user : PT.user;
+    var B = has ? CielAstro.deviceBasis(alpha, ori.beta, ori.gamma, screenAngle()) : CielAstro.deviceBasis(alpha, 120, 0, 0);
+    var f = B.f, u = B.u, r = B.r;
+    var Fp = (ptW / 2) / Math.tan(PT.fov * Math.PI / 360);
+    var cx = ptW / 2, cy = ptH / 2;
+    var i, j, zc, X, Y;
+    function proj(vx, vy, vz) {
+      zc = f[0] * vx + f[1] * vy + f[2] * vz;
+      if (zc < 0.12) { return false; }
+      X = cx + Fp * (r[0] * vx + r[1] * vy + r[2] * vz) / zc;
+      Y = cy - Fp * (u[0] * vx + u[1] * vy + u[2] * vz) / zc;
+      return true;
+    }
+    ptHits = [];
+    x.textBaseline = 'middle';
+    /* horizon et points cardinaux */
+    x.strokeStyle = P.ring; x.lineWidth = 2; x.beginPath();
+    var pen = false;
+    for (i = 0; i <= 360; i += 3) {
+      var hv = CielAstro.enu(0, i);
+      if (proj(hv[0], hv[1], hv[2])) { if (pen) { x.lineTo(X, Y); } else { x.moveTo(X, Y); pen = true; } } else { pen = false; }
+    }
+    x.stroke();
+    var card = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
+    x.font = 'bold 16px ' + F0; x.textAlign = 'center'; x.fillStyle = P.card;
+    for (i = 0; i < 8; i++) {
+      var cv2 = CielAstro.enu(2.5, i * 45);
+      if (proj(cv2[0], cv2[1], cv2[2])) { x.fillText(card[i], X, Y); }
+    }
+    /* lignes des constellations */
+    x.strokeStyle = P.line; x.lineWidth = 1; x.beginPath();
+    for (i = 0; i < C.lines.length; i++) {
+      var L = C.lines[i], prev = null;
+      for (j = 0; j < L.length; j += 3) {
+        if (L[j + 2] > -0.05 && proj(L[j], L[j + 1], L[j + 2])) {
+          if (prev) { x.moveTo(prev[0], prev[1]); x.lineTo(X, Y); }
+          prev = [X, Y];
+        } else { prev = null; }
+      }
+    }
+    x.stroke();
+    /* etoiles */
+    var S2 = C.stars, zf = Math.sqrt(62 / PT.fov);
+    for (i = 0; i < S2.length; i += 5) {
+      if (!proj(S2[i], S2[i + 1], S2[i + 2])) { continue; }
+      if (X < -5 || Y < -5 || X > ptW + 5 || Y > ptH + 5) { continue; }
+      x.fillStyle = P.stars[S2[i + 4]];
+      x.beginPath(); x.arc(X, Y, Math.max(0.7, (5.6 - S2[i + 3]) * 0.72) * zf, 0, 6.2832); x.fill();
+    }
+    /* etiquettes */
+    var labels = [];
+    for (i = 0; i < C.labels.length; i++) {
+      if (proj(C.labels[i].v[0], C.labels[i].v[1], C.labels[i].v[2])) { labels.push({ pr: 30, t: C.labels[i].name, x: X, y: Y, c: 1, col: P.text, f: '12px ' + F0, a: 0.7 }); }
+    }
+    var best = null, bestD = 0.9962; /* cos 5 degres */
+    for (i = 0; i < C.named.length; i++) {
+      var ns = C.named[i];
+      var dn = dot(f, ns.v[0], ns.v[1], ns.v[2]);
+      if (proj(ns.v[0], ns.v[1], ns.v[2])) {
+        ptHits.push({ x: X, y: Y, kind: 'star', name: ns.name, alt: ns.alt, az: ns.az, mag: ns.mag });
+        if (ns.mag <= 2.2) { labels.push({ pr: 10 + ns.mag, t: ns.name, x: X + 8, y: Y - 8, c: 0, col: P.text, f: '13px ' + F0, a: 1 }); }
+      }
+      if (dn > bestD + 0.0012) { bestD = dn - 0.0012; best = ns.name; }
+    }
+    for (i = 0; i < C.items.length; i++) {
+      var it = C.items[i];
+      var di = dot(f, it.v[0], it.v[1], it.v[2]);
+      if (di > bestD) { bestD = di; best = it.name; }
+      if (!proj(it.v[0], it.v[1], it.v[2])) { continue; }
+      if (it.cat === 'sol') {
+        var pr = it.id === 'Moon' ? 10 : 6;
+        x.fillStyle = it.id === 'Moon' ? P.moon : P.planet;
+        x.beginPath(); x.arc(X, Y, pr, 0, 6.2832); x.fill();
+        labels.push({ pr: 0, t: it.name, x: X + pr + 6, y: Y, c: 0, col: P.card, f: 'bold 15px ' + F0, a: 1 });
+      } else {
+        x.strokeStyle = P.target; x.lineWidth = 1.5; x.beginPath();
+        if (it.cat === 'dbl') { x.moveTo(X - 6, Y); x.lineTo(X, Y - 6); x.lineTo(X + 6, Y); x.lineTo(X, Y + 6); x.closePath(); }
+        else { x.arc(X, Y, 6, 0, 6.2832); }
+        x.stroke();
+        if (PT.sel === it.id || PT.fov <= 45) { labels.push({ pr: PT.sel === it.id ? 1 : 20, t: it.gk === 'M' ? it.id : it.name, x: X + 10, y: Y + 10, c: 0, col: PT.sel === it.id ? P.sel : P.target, f: '12px ' + F0, a: 1 }); }
+      }
+      if (PT.sel === it.id) { x.strokeStyle = P.sel; x.lineWidth = 2; x.beginPath(); x.arc(X, Y, 16, 0, 6.2832); x.stroke(); }
+      ptHits.push({ x: X, y: Y, kind: 'item', id: it.id });
+    }
+    if (C.sun && proj(C.sun[0], C.sun[1], C.sun[2])) {
+      x.fillStyle = P.planet; x.beginPath(); x.arc(X, Y, 14, 0, 6.2832); x.fill();
+      labels.push({ pr: 0, t: 'Soleil : ne jamais le viser au télescope', x: X + 20, y: Y, c: 0, col: P.card, f: 'bold 14px ' + F0, a: 1 });
+    }
+    labels.sort(function (a, b) { return a.pr - b.pr; });
+    var placed = [];
+    for (i = 0; i < labels.length; i++) {
+      var Lb = labels[i];
+      x.font = Lb.f;
+      var w = x.measureText(Lb.t).width;
+      var x0 = Lb.c ? Lb.x - w / 2 : Lb.x;
+      var bx = [x0 - 3, Lb.y - 9, x0 + w + 3, Lb.y + 9], clash = false;
+      for (j = 0; j < placed.length; j++) {
+        var o = placed[j];
+        if (bx[0] < o[2] && bx[2] > o[0] && bx[1] < o[3] && bx[3] > o[1]) { clash = true; break; }
+      }
+      if (clash) { continue; }
+      placed.push(bx);
+      x.globalAlpha = Lb.a; x.fillStyle = Lb.col; x.textAlign = 'left'; x.fillText(Lb.t, x0, Lb.y);
+    }
+    x.globalAlpha = 1;
+    /* viseur central et lecture */
+    x.strokeStyle = P.card; x.lineWidth = 1.5;
+    x.beginPath(); x.arc(cx, cy, 20, 0, 6.2832);
+    x.moveTo(cx - 32, cy); x.lineTo(cx - 20, cy); x.moveTo(cx + 20, cy); x.lineTo(cx + 32, cy);
+    x.moveTo(cx, cy - 32); x.lineTo(cx, cy - 20); x.moveTo(cx, cy + 20); x.lineTo(cx, cy + 32);
+    x.stroke();
+    var az = norm360(Math.atan2(f[0], f[1]) * 180 / Math.PI);
+    var alt = Math.asin(Math.max(-1, Math.min(1, f[2]))) * 180 / Math.PI;
+    var line1 = alt < -2 ? 'Tu vises le sol : lève l\'iPad vers le ciel' : 'Tu vises : ' + CielAstro.direction(az) + ', à ' + Math.round(alt) + '° de hauteur';
+    var line2 = best ? 'Au centre : ' + best : '';
+    x.textAlign = 'center';
+    x.font = 'bold 17px ' + F0;
+    var w1 = Math.max(x.measureText(line1).width, line2 ? x.measureText(line2).width + 30 : 0) + 28;
+    x.globalAlpha = 0.72; x.fillStyle = S.mode === 'nuit' ? '#000000' : '#0b1430';
+    x.fillRect(cx - w1 / 2, 10, w1, line2 ? 62 : 36);
+    x.globalAlpha = 1; x.fillStyle = P.card;
+    x.fillText(line1, cx, 28);
+    if (line2) { x.font = 'bold 21px ' + F0; x.fillStyle = S.mode === 'nuit' ? P.sel : '#ffffff'; x.fillText(line2, cx, 54); }
+    x.textAlign = 'left';
+  }
+  function ptLoop() {
+    if (S.view !== 'pointer' || !ptCv) { ptRaf = null; return; }
+    drawPointer();
+    ptRaf = (window.requestAnimationFrame || function (fn) { return window.setTimeout(fn, 40); })(ptLoop);
+  }
+  function ptSensors() {
+    var el = $('pt-sens');
+    if (!el) { return; }
+    var h;
+    if (ori.n === 0) {
+      h = '<strong>Aucun signal des capteurs.</strong> Sur l\'iPad : Réglages, Safari, « Accès aux mouvements et à l\'orientation » doit être activé, puis ferme et rouvre l\'application. En attendant, glisse le doigt sur l\'image pour tourner le ciel à la main.';
+    } else {
+      h = 'Capteurs actifs : ' + ori.n + ' mesures reçues · inclinaison ' + Math.round(ori.beta) + '° · roulis ' + Math.round(ori.gamma) + '° · rotation ' + Math.round(ori.alpha) + '°';
+      if (ori.absolute) { h += ' · orientation absolue fournie par l\'appareil'; }
+      else if (ori.heading !== null) { h += ' · boussole ' + Math.round(ori.heading) + '°' + (ori.acc !== null ? ' (précision ±' + Math.round(Math.abs(ori.acc)) + '°)' : ''); }
+      else { h += ' · pas de boussole'; }
+      if (!ori.absolute && ori.offset === null) { h += '<br><strong>Boussole pas encore réglée :</strong> pose l\'iPad à plat deux secondes, puis lève-le vers le ciel.'; }
+      else { h += '<br>Nord réglé' + (PT.user ? ', corrigé à la main de ' + Math.round(PT.user) + '°' : '') + '.'; }
+    }
+    el.innerHTML = h;
+  }
+  function ptInfo() {
+    var el = $('pt-info');
+    if (!el) { return; }
+    var h = '';
+    if (PT.sel) {
+      var it = itemById(PT.sel);
+      if (it) { h = '<button type="button" class="close" data-act="ptunsel">Fermer</button>' + card(it, compute(now()), true); }
+    }
+    el.innerHTML = h;
+    el.className = h ? 'map-info open' : 'map-info';
+  }
+  function renderPointer() {
+    var h = '<p class="lead">Lève l\'iPad vers le ciel, l\'écran tourné vers toi : l\'image montre ce qui se trouve derrière lui, à l\'heure actuelle.</p>';
+    h += '<div class="map-wrap"><div class="map-box pt-box" id="pt-box"><canvas id="ptsky"></canvas></div>';
+    h += '<div class="map-tools">';
+    h += '<button type="button" class="btn small" data-act="ptin" aria-label="Agrandir">+</button>';
+    h += '<button type="button" class="btn small" data-act="ptout" aria-label="Réduire">−</button>';
+    h += '<button type="button" class="btn small" data-act="ptreset">Réaligner sur la boussole</button>';
+    if (typeof window.DeviceOrientationEvent !== 'undefined' && typeof window.DeviceOrientationEvent.requestPermission === 'function') {
+      h += '<button type="button" class="btn small primary" data-act="ptperm">Activer les capteurs</button>';
+    }
+    h += '</div>';
+    h += '<p class="note" id="pt-sens"></p>';
+    h += '<p class="small">Si le ciel est décalé par rapport à ce que tu vois, vise un astre que tu reconnais (la Lune, une planète, une étoile brillante) et glisse le doigt sur l\'image, à gauche ou à droite, jusqu\'à ce qu\'il tombe au bon endroit. La boussole d\'une tablette se trompe facilement de plusieurs degrés, surtout près d\'objets en métal.</p>';
+    h += '<div class="map-info" id="pt-info"></div></div>';
+    return h;
+  }
+  function bindPointer() {
+    ptCv = $('ptsky');
+    if (!ptCv) { return; }
+    ptCtx = ptCv.getContext('2d');
+    function size() {
+      var box = ptCv.parentNode;
+      ptW = box.clientWidth; ptH = box.clientHeight;
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      ptCv.width = Math.round(ptW * dpr); ptCv.height = Math.round(ptH * dpr);
+      ptCv.style.width = ptW + 'px'; ptCv.style.height = ptH + 'px';
+    }
+    size();
+    ptCv._size = size;
+    ptCache = null;
+    ptSensors(); ptInfo();
+    if (ptTimer) { window.clearInterval(ptTimer); }
+    ptTimer = window.setInterval(function () { if (S.view === 'pointer') { ptSensors(); } else { window.clearInterval(ptTimer); ptTimer = null; } }, 600);
+    if (!ptRaf) { ptLoop(); }
+    var g = null;
+    function local(t) { var rc = ptCv.getBoundingClientRect(); return [t.clientX - rc.left, t.clientY - rc.top]; }
+    function start(t) { var p = local(t); g = { x: t.clientX, user: PT.user, moved: false, lx: p[0], ly: p[1] }; }
+    function move(t) {
+      if (!g) { return; }
+      var dx = t.clientX - g.x;
+      if (Math.abs(dx) > 8) { g.moved = true; }
+      if (g.moved) { PT.user = g.user + dx * PT.fov / ptW; }
+    }
+    function end() {
+      if (g && !g.moved) {
+        var bestH = null, bd = 34 * 34;
+        for (var i = 0; i < ptHits.length; i++) {
+          if (ptHits[i].kind !== 'item') { continue; }
+          var ddx = ptHits[i].x - g.lx, ddy = ptHits[i].y - g.ly, d2 = ddx * ddx + ddy * ddy;
+          if (d2 < bd) { bd = d2; bestH = ptHits[i]; }
+        }
+        PT.sel = bestH ? bestH.id : null;
+        ptInfo();
+        if (bestH) { var mn = $('main'); mn.scrollTop = mn.scrollHeight; }
+      }
+      g = null;
+    }
+    ptCv.addEventListener('touchstart', function (e) { e.preventDefault(); if (e.touches.length === 1) { start(e.touches[0]); } }, { passive: false });
+    ptCv.addEventListener('touchmove', function (e) { e.preventDefault(); if (e.touches.length === 1) { move(e.touches[0]); } }, { passive: false });
+    ptCv.addEventListener('touchend', function (e) { e.preventDefault(); end(); }, { passive: false });
+    ptCv.addEventListener('mousedown', function (e) { start(e); });
+    ptCv.addEventListener('mousemove', function (e) { if (g) { move(e); } });
+    ptCv.addEventListener('mouseup', function () { end(); });
+  }
+
   /* ---------- Vue : Guide ---------- */
   function renderGuide() {
     var g = CIEL_CONTENT.guide;
@@ -1574,6 +1907,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     cache.key = null;
     compute(now());
     r.push(['Calcul de la soirée', (Date.now() - t0) + ' millisecondes', (Date.now() - t0) < 3000]);
+    r.push(['Capteurs de mouvement', ori.n > 0 ? 'actifs (' + ori.n + ' mesures)' : 'aucun signal', ori.n > 0]);
     r.push(['Navigateur', navigator.userAgent, true]);
     S.diag = r;
   }
@@ -1589,11 +1923,12 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     $('mode-btn').textContent = S.mode === 'jour' ? 'Mode nuit' : 'Mode jour';
     var main = $('main');
     var h = '';
-    cv = null; ctx = null;
+    cv = null; ctx = null; ptCv = null; ptCtx = null;
     main.className = 'main v-' + S.view;
     try {
       if (S.view === 'soir') { h = renderSoir(); }
       else if (S.view === 'carte') { h = renderCarte(); }
+      else if (S.view === 'pointer') { h = renderPointer(); }
       else if (S.view === 'guide') { h = renderGuide(); }
       else if (S.view === 'memo') { h = renderMemo(); }
       else if (S.view === 'carnet') { h = renderCarnet(); }
@@ -1603,6 +1938,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     }
     main.innerHTML = h;
     if (S.view === 'carte') { bindMap(); }
+    if (S.view === 'pointer') { bindPointer(); }
   }
   function go(view) {
     readDraft();
@@ -1678,6 +2014,15 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     }
     if (a === 'diag') { runDiag(); render(); return; }
     if (a === 'wx') { wxFetch(true, false); return; }
+    if (a === 'ptin' || a === 'ptout') { PT.fov = Math.max(22, Math.min(95, PT.fov * (a === 'ptin' ? 0.75 : 1 / 0.75))); return; }
+    if (a === 'ptreset') { PT.user = 0; ptSensors(); return; }
+    if (a === 'ptunsel') { PT.sel = null; ptInfo(); return; }
+    if (a === 'ptperm') {
+      try {
+        window.DeviceOrientationEvent.requestPermission().then(function () { ptSensors(); }, function () { ptSensors(); });
+      } catch (e3) { /* sans objet */ }
+      return;
+    }
     if (a === 'maj') { updateApp(); return; }
   }
 
@@ -1708,9 +2053,11 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
         el = el.parentNode;
       }
     }, false);
-    window.addEventListener('resize', function () { if (S.view === 'carte' && cv) { sizeCanvas(); drawMap(); } }, false);
+    window.addEventListener('resize', function () { if (S.view === 'carte' && cv) { sizeCanvas(); drawMap(); } if (S.view === 'pointer' && ptCv && ptCv._size) { ptCv._size(); } }, false);
+    window.addEventListener('deviceorientation', function (e) { onOrient(e, false); }, false);
+    window.addEventListener('deviceorientationabsolute', function (e) { onOrient(e, true); }, false);
     window.addEventListener('orientationchange', function () {
-      window.setTimeout(function () { if (S.view === 'carte' && cv) { sizeCanvas(); drawMap(); } }, 300);
+      window.setTimeout(function () { if (S.view === 'carte' && cv) { sizeCanvas(); drawMap(); } if (S.view === 'pointer' && ptCv && ptCv._size) { ptCv._size(); } }, 300);
     }, false);
     /* heure actuelle : rafraichir chaque minute, sans deranger une saisie */
     window.setInterval(function () {
