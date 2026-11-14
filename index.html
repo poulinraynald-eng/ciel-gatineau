@@ -659,7 +659,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
 /* Compagnon de telescope - application. Syntaxe ES5 uniquement (Safari iOS 12). */
 (function () {
   'use strict';
-  var VERSION = '1.4.1';
+  var VERSION = '1.4.2';
   var FOCALE = 2032; /* NexStar 8SE, en mm */
   var CHAMP_APPARENT = 50; /* degres, valeur typique d'un oculaire Plossl */
 
@@ -1414,8 +1414,8 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
 
   /* ---------- Vue : Pointer (le ciel suit l'orientation de l'appareil) ---------- */
   var DECLINAISON = -13; /* nord magnetique a Ottawa-Gatineau : environ 13 degres a l'ouest du nord vrai */
-  var ori = { n: 0, alpha: null, beta: null, gamma: null, heading: null, acc: null, absolute: false, offset: null };
-  var PT = { fov: 62, user: 0, sel: null };
+  var ori = { n: 0, alpha: null, beta: null, gamma: null, heading: null, acc: null, absolute: false, offset: null, locked: false, flat: 0 };
+  var PT = { fov: 62, user: 0, sel: null, az: 0 };
   var ptCv = null, ptCtx = null, ptW = 0, ptH = 0, ptHits = [], ptCache = null, ptTimer = null, ptRaf = null;
   function norm360(x) { x = x % 360; return x < 0 ? x + 360 : x; }
   function onOrient(e, absoluteEvent) {
@@ -1428,7 +1428,8 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
       ori.heading = e.webkitCompassHeading;
       ori.acc = typeof e.webkitCompassAccuracy === 'number' ? e.webkitCompassAccuracy : null;
       /* La boussole n'est fiable que lorsque l'appareil est a peu pres a plat */
-      if (Math.abs(ori.beta) < 55 && Math.abs(ori.gamma) < 55 && !(ori.acc !== null && ori.acc < 0)) {
+      if (!ori.locked && Math.abs(ori.beta) < 30 && Math.abs(ori.gamma) < 30 && !(ori.acc !== null && ori.acc < 0)) {
+        ori.flat++;
         /* Sur iOS, la boussole donne le cap du haut de l'ecran tel qu'il est affiche (constate sur l'iPad :
            juste en portrait, decale d'un quart de tour en paysage). On le ramene au haut de l'appareil. */
         var target = norm360((360 - (ori.heading - screenAngle() + DECLINAISON)) - ori.alpha);
@@ -1614,6 +1615,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     x.moveTo(cx, cy - 32); x.lineTo(cx, cy - 20); x.moveTo(cx, cy + 20); x.lineTo(cx, cy + 32);
     x.stroke();
     var az = norm360(Math.atan2(f[0], f[1]) * 180 / Math.PI);
+    PT.az = az;
     var alt = Math.asin(Math.max(-1, Math.min(1, f[2]))) * 180 / Math.PI;
     var line1 = alt < -2 ? 'Tu vises le sol : lève l\'iPad vers le ciel' : 'Tu vises : ' + CielAstro.direction(az) + ', à ' + Math.round(alt) + '° de hauteur';
     var line2 = best ? 'Au centre : ' + best : '';
@@ -1625,6 +1627,20 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     x.globalAlpha = 1; x.fillStyle = P.card;
     x.fillText(line1, cx, 28);
     if (line2) { x.font = 'bold 21px ' + F0; x.fillStyle = S.mode === 'nuit' ? P.sel : '#ffffff'; x.fillText(line2, cx, 54); }
+    /* etat du nord, ecrit dans l'image pour etre toujours visible */
+    var st;
+    if (!has) { st = 'Capteurs sans signal : glisse le doigt pour tourner le ciel'; }
+    else if (ori.locked) { st = 'Nord réglé à la main'; }
+    else if (ori.absolute) { st = 'Nord fourni par l\'appareil'; }
+    else if (ori.offset === null) { st = 'NORD NON RÉGLÉ : vise le nord et touche « Ici, c\'est le nord »'; }
+    else { st = 'Nord réglé par la boussole' + (ori.acc !== null ? ' (±' + Math.round(Math.abs(ori.acc)) + '°)' : ''); }
+    st += ' · écran ' + screenAngle() + '° · v' + VERSION;
+    x.font = 'bold 14px ' + F0;
+    var w2 = x.measureText(st).width + 24;
+    x.globalAlpha = 0.72; x.fillStyle = S.mode === 'nuit' ? '#000000' : '#0b1430';
+    x.fillRect(cx - w2 / 2, ptH - 36, w2, 28);
+    x.globalAlpha = 1; x.fillStyle = (has && !ori.locked && !ori.absolute && ori.offset === null) ? (S.mode === 'nuit' ? P.sel : '#ffb4a8') : P.card;
+    x.fillText(st, cx, ptH - 22);
     x.textAlign = 'left';
   }
   function ptLoop() {
@@ -1649,8 +1665,10 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
       else { h += ' · pas de boussole'; }
       h += ' · écran ' + screenAngle() + '°';
       if (!ori.absolute && ori.acc !== null && Math.abs(ori.acc) >= 25) { h += '<br><strong>Boussole imprécise en ce moment :</strong> éloigne-toi des objets en métal et des appareils électriques, ou aligne le ciel à la main en glissant le doigt.'; }
-      if (!ori.absolute && ori.offset === null) { h += '<br><strong>Boussole pas encore réglée :</strong> pose l\'iPad à plat deux secondes, puis lève-le vers le ciel.'; }
-      else { h += '<br>Nord réglé' + (PT.user ? ', corrigé à la main de ' + Math.round(PT.user) + '°' : '') + '.'; }
+      h += ' · mesures à plat ' + ori.flat;
+      if (ori.locked) { h += '<br>Nord réglé à la main.'; }
+      else if (!ori.absolute && ori.offset === null) { h += '<br><strong>Nord pas encore réglé :</strong> vise le nord et touche « Ici, c\'est le nord ».'; }
+      else { h += '<br>Nord réglé par la boussole' + (PT.user ? ', corrigé à la main de ' + Math.round(PT.user) + '°' : '') + '.'; }
     }
     el.innerHTML = h;
   }
@@ -1671,12 +1689,14 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     h += '<div class="map-tools">';
     h += '<button type="button" class="btn small" data-act="ptin" aria-label="Agrandir">+</button>';
     h += '<button type="button" class="btn small" data-act="ptout" aria-label="Réduire">−</button>';
-    h += '<button type="button" class="btn small" data-act="ptreset">Réaligner sur la boussole</button>';
+    h += '<button type="button" class="btn small primary" data-act="ptnorth">Ici, c\'est le nord</button>';
+    h += '<button type="button" class="btn small" data-act="ptreset">Laisser faire la boussole</button>';
     if (typeof window.DeviceOrientationEvent !== 'undefined' && typeof window.DeviceOrientationEvent.requestPermission === 'function') {
       h += '<button type="button" class="btn small primary" data-act="ptperm">Activer les capteurs</button>';
     }
     h += '</div>';
     h += '<p class="note" id="pt-sens"></p>';
+    h += '<p class="small"><strong>Pour régler le nord à coup sûr :</strong> repère le nord avec la boussole de ton téléphone, tiens l\'iPad bien droit tourné dans cette direction, puis touche « Ici, c\'est le nord ». Le réglage tient tant que tu ne recharges pas la page.</p>';
     h += '<p class="small">Si le ciel est décalé par rapport à ce que tu vois, vise un astre que tu reconnais (la Lune, une planète, une étoile brillante) et glisse le doigt sur l\'image, à gauche ou à droite, jusqu\'à ce qu\'il tombe au bon endroit. La boussole d\'une tablette se trompe facilement de plusieurs degrés, surtout près d\'objets en métal.</p>';
     h += '<div class="map-info" id="pt-info"></div></div>';
     return h;
@@ -2025,7 +2045,13 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     if (a === 'diag') { runDiag(); render(); return; }
     if (a === 'wx') { wxFetch(true, false); return; }
     if (a === 'ptin' || a === 'ptout') { PT.fov = Math.max(22, Math.min(95, PT.fov * (a === 'ptin' ? 0.75 : 1 / 0.75))); return; }
-    if (a === 'ptreset') { PT.user = 0; ptSensors(); return; }
+    if (a === 'ptreset') { PT.user = 0; ori.locked = false; ori.offset = null; ori.flat = 0; ptSensors(); return; }
+    if (a === 'ptnorth') {
+      /* La direction visee en ce moment devient le nord : on tourne le ciel de l'azimut affiche */
+      if (ori.offset === null) { ori.offset = 0; }
+      PT.user = PT.user + PT.az;
+      ori.locked = true; ptSensors(); return;
+    }
     if (a === 'ptunsel') { PT.sel = null; ptInfo(); return; }
     if (a === 'ptperm') {
       try {
