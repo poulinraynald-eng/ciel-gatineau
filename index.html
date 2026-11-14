@@ -659,7 +659,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
 /* Compagnon de telescope - application. Syntaxe ES5 uniquement (Safari iOS 12). */
 (function () {
   'use strict';
-  var VERSION = '1.4.0';
+  var VERSION = '1.4.1';
   var FOCALE = 2032; /* NexStar 8SE, en mm */
   var CHAMP_APPARENT = 50; /* degres, valeur typique d'un oculaire Plossl */
 
@@ -1429,7 +1429,9 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
       ori.acc = typeof e.webkitCompassAccuracy === 'number' ? e.webkitCompassAccuracy : null;
       /* La boussole n'est fiable que lorsque l'appareil est a peu pres a plat */
       if (Math.abs(ori.beta) < 55 && Math.abs(ori.gamma) < 55 && !(ori.acc !== null && ori.acc < 0)) {
-        var target = norm360((360 - (ori.heading + DECLINAISON)) - ori.alpha);
+        /* Sur iOS, la boussole donne le cap du haut de l'ecran tel qu'il est affiche (constate sur l'iPad :
+           juste en portrait, decale d'un quart de tour en paysage). On le ramene au haut de l'appareil. */
+        var target = norm360((360 - (ori.heading - screenAngle() + DECLINAISON)) - ori.alpha);
         if (ori.offset === null) { ori.offset = target; }
         else {
           var d = target - ori.offset;
@@ -1560,12 +1562,14 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
         ptHits.push({ x: X, y: Y, kind: 'star', name: ns.name, alt: ns.alt, az: ns.az, mag: ns.mag });
         if (ns.mag <= 2.2) { labels.push({ pr: 10 + ns.mag, t: ns.name, x: X + 8, y: Y - 8, c: 0, col: P.text, f: '13px ' + F0, a: 1 }); }
       }
-      if (dn > bestD + 0.0012) { bestD = dn - 0.0012; best = ns.name; }
+      if (dn > bestD) { bestD = dn; best = ns.name; }
     }
     for (i = 0; i < C.items.length; i++) {
       var it = C.items[i];
       var di = dot(f, it.v[0], it.v[1], it.v[2]);
-      if (di > bestD) { bestD = di; best = it.name; }
+      /* l'astre le plus proche du centre l'emporte ; la Lune et les planetes ont un leger avantage */
+      var sc = di + (it.cat === 'sol' ? 0.0008 : 0);
+      if (sc > bestD) { bestD = sc; best = it.name; }
       if (!proj(it.v[0], it.v[1], it.v[2])) { continue; }
       if (it.cat === 'sol') {
         var pr = it.id === 'Moon' ? 10 : 6;
@@ -1633,12 +1637,18 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
     if (!el) { return; }
     var h;
     if (ori.n === 0) {
-      h = '<strong>Aucun signal des capteurs.</strong> Sur l\'iPad : Réglages, Safari, « Accès aux mouvements et à l\'orientation » doit être activé, puis ferme et rouvre l\'application. En attendant, glisse le doigt sur l\'image pour tourner le ciel à la main.';
+      if (navigator.standalone) {
+        h = '<strong>Aucun signal des capteurs.</strong> Sur cet iPad, les capteurs ne répondent pas quand l\'application est ouverte depuis l\'écran d\'accueil, mais ils fonctionnent dans Safari. <a class="btn small primary" style="margin:8px 0 0" href="https://poulinraynald-eng.github.io/ciel-gatineau/#pointer" target="_blank" rel="noopener">Ouvrir Pointer dans Safari</a>';
+      } else {
+        h = '<strong>Aucun signal des capteurs.</strong> Sur l\'iPad : Réglages, Safari, « Accès aux mouvements et à l\'orientation » doit être activé, puis recharge la page. En attendant, glisse le doigt sur l\'image pour tourner le ciel à la main.';
+      }
     } else {
       h = 'Capteurs actifs : ' + ori.n + ' mesures reçues · inclinaison ' + Math.round(ori.beta) + '° · roulis ' + Math.round(ori.gamma) + '° · rotation ' + Math.round(ori.alpha) + '°';
       if (ori.absolute) { h += ' · orientation absolue fournie par l\'appareil'; }
       else if (ori.heading !== null) { h += ' · boussole ' + Math.round(ori.heading) + '°' + (ori.acc !== null ? ' (précision ±' + Math.round(Math.abs(ori.acc)) + '°)' : ''); }
       else { h += ' · pas de boussole'; }
+      h += ' · écran ' + screenAngle() + '°';
+      if (!ori.absolute && ori.acc !== null && Math.abs(ori.acc) >= 25) { h += '<br><strong>Boussole imprécise en ce moment :</strong> éloigne-toi des objets en métal et des appareils électriques, ou aligne le ciel à la main en glissant le doigt.'; }
       if (!ori.absolute && ori.offset === null) { h += '<br><strong>Boussole pas encore réglée :</strong> pose l\'iPad à plat deux secondes, puis lève-le vers le ciel.'; }
       else { h += '<br>Nord réglé' + (PT.user ? ', corrigé à la main de ' + Math.round(PT.user) + '°' : '') + '.'; }
     }
@@ -2042,6 +2052,7 @@ if (typeof module !== 'undefined') { module.exports = CielAstro; }
 
   function start() {
     try { initTime(); } catch (e) { S.time = null; }
+    if (window.location.hash === '#pointer') { S.view = 'pointer'; }
     document.addEventListener('click', function (e) {
       var el = e.target;
       while (el && el !== document.body) {
