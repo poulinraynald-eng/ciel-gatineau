@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signatures courriel — Raynald Poulin</title>
+<style>
+  body{margin:0;padding:20px 14px 40px;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#1f2937}
+  h1{font-size:20px;margin:0 0 4px}
+  p.intro{font-size:14px;color:#4b5563;margin:0 0 20px;line-height:1.45}
+  .card{background:#fff;border-radius:10px;padding:16px;margin:0 0 18px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:620px}
+  .card h2{font-size:15px;margin:0 0 4px}
+  .card .note{font-size:13px;color:#6b7280;margin:0 0 14px}
+  .sig{border:1px solid #e5e7eb;border-radius:6px;padding:14px;overflow-x:auto;background:#fff}
+  button{margin-top:12px;font-size:14px;padding:9px 14px;border-radius:6px;border:0;background:#1e3a5f;color:#fff;cursor:pointer}
+  .ok{font-size:13px;color:#047857;margin-left:8px}
+  .howto{max-width:620px;font-size:14px;line-height:1.5;background:#fff;border-radius:10px;padding:16px}
+  .howto h2{font-size:15px;margin:0 0 6px}
+</style>
+</head>
+<body>
+<h1>Signatures courriel — 3 options</h1>
+<p class="intro">Format : HTML (tableau + styles intégrés), le plus fiable dans Outlook, Gmail et sur iPhone. Logo officiel « Membre de l'OPPQ » (non modifié), lié à une adresse en ligne pour qu'il s'affiche partout.</p>
+
+<!-- OPTION A -->
+<div class="card">
+  <h2>Option A — Classique</h2>
+  <p class="note">Logo à gauche, filet vertical, texte à droite.</p>
+  <div class="sig" id="sigA">
+<table cellpadding="0" cellspacing="0" border="0" style="font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.45;color:#333333;">
+  <tr>
+    <td valign="middle" style="padding-right:14px;">
+      <img src="https://poulinraynald-eng.github.io/ciel-gatineau/signature/logo-oppq-membre.png" width="170" alt="Membre de l'Ordre des psychoéducateurs et psychoéducatrices du Québec" style="display:block;width:170px;height:auto;border:0;">
+    </td>
+    <td valign="middle" style="border-left:3px solid #a6c435;padding-left:14px;">
+      <span style="font-size:16px;font-weight:bold;color:#333333;">Raynald Poulin, ps.&nbsp;éd.</span><br>
+      Psychoéducateur, membre de l'OPPQ · n°&nbsp;1421900<br>
+      Retraité et membre honoraire de l'UQO<br>
+      <a href="mailto:raynald.poulin@uqo.ca" style="color:#6f8a12;text-decoration:none;">raynald.poulin@uqo.ca</a> | 819&nbsp;665-4477
+    </td>
+  </tr>
+</table>
+  </div>
+  <button onclick="copySig('sigA',this)">Copier l'option A</button>
+</div>
+
+<!-- OPTION B -->
+<div class="card">
+  <h2>Option B — Compacte</h2>
+  <p class="note">Texte d'abord, petit logo dessous. Idéale sur cellulaire.</p>
+  <div class="sig" id="sigB">
+<table cellpadding="0" cellspacing="0" border="0" style="font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.45;color:#444444;">
+  <tr><td>
+    <span style="font-size:14px;font-weight:bold;color:#222222;">Raynald Poulin, ps.&nbsp;éd.</span><br>
+    Psychoéducateur, membre de l'OPPQ · n°&nbsp;1421900<br>
+    Retraité et membre honoraire de l'UQO<br>
+    <a href="mailto:raynald.poulin@uqo.ca" style="color:#6f8a12;text-decoration:none;">raynald.poulin@uqo.ca</a> · 819&nbsp;665-4477
+  </td></tr>
+  <tr><td style="padding-top:8px;">
+    <img src="https://poulinraynald-eng.github.io/ciel-gatineau/signature/logo-oppq-membre.png" width="220" alt="Membre de l'Ordre des psychoéducateurs et psychoéducatrices du Québec" style="display:block;width:220px;height:auto;border:0;">
+  </td></tr>
+</table>
+  </div>
+  <button onclick="copySig('sigB',this)">Copier l'option B</button>
+</div>
+
+<!-- OPTION C -->
+<div class="card">
+  <h2>Option C — Institutionnelle</h2>
+  <p class="note">Nom en évidence, bande de couleur, logo à droite.</p>
+  <div class="sig" id="sigC">
+<table cellpadding="0" cellspacing="0" border="0" style="font-family:Georgia,'Times New Roman',serif;font-size:13px;line-height:1.5;color:#333333;">
+  <tr>
+    <td valign="top" style="padding-right:16px;">
+      <span style="font-size:18px;color:#333333;">Raynald Poulin, ps.&nbsp;éd.</span><br>
+      <span style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#555555;">Psychoéducateur, membre de l'OPPQ · n°&nbsp;1421900<br>Retraité et membre honoraire de l'UQO</span>
+    </td>
+    <td valign="middle">
+      <img src="https://poulinraynald-eng.github.io/ciel-gatineau/signature/logo-oppq-membre.png" width="170" alt="Membre de l'Ordre des psychoéducateurs et psychoéducatrices du Québec" style="display:block;width:170px;height:auto;border:0;">
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" style="padding-top:8px;">
+      <div style="border-top:2px solid #a6c435;padding-top:6px;font-family:Arial,Helvetica,sans-serif;font-size:12px;">
+        <a href="mailto:raynald.poulin@uqo.ca" style="color:#6f8a12;text-decoration:none;">raynald.poulin@uqo.ca</a> &nbsp;|&nbsp; 819&nbsp;665-4477
+      </div>
+    </td>
+  </tr>
+</table>
+  </div>
+  <button onclick="copySig('sigC',this)">Copier l'option C</button>
+</div>
+
+<div class="howto">
+  <h2>Installer (une étape à la fois)</h2>
+  1. Ouvre cette page dans Safari (iPad) ou dans ton navigateur (PC).<br>
+  2. Touche « Copier » sous l'option choisie.<br>
+  3. iPad : Réglages → Apps → Mail → Signature → efface l'ancienne → colle.<br>
+  &nbsp;&nbsp;&nbsp;Outlook : Paramètres → Courrier → Composer et répondre → Signature → colle.<br>
+  4. Envoie-toi un courriel test pour vérifier.
+</div>
+
+<script>
+function copySig(id, btn){
+  var el = document.getElementById(id);
+  var html = el.innerHTML, text = el.innerText;
+  function done(msg){
+    var s = btn.nextElementSibling;
+    if(!s || !s.classList || !s.classList.contains('ok')){ s = document.createElement('span'); s.className='ok'; btn.after(s); }
+    s.textContent = msg;
+  }
+  function fallback(){
+    try{
+      var r = document.createRange(); r.selectNodeContents(el);
+      var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      var ok = document.execCommand('copy'); sel.removeAllRanges();
+      done(ok ? 'Copiée ✓' : 'Sélectionne la signature et copie-la à la main');
+    }catch(e){ done('Sélectionne la signature et copie-la à la main'); }
+  }
+  try{
+    if(window.ClipboardItem && navigator.clipboard && navigator.clipboard.write){
+      navigator.clipboard.write([new ClipboardItem({
+        'text/html': new Blob([html],{type:'text/html'}),
+        'text/plain': new Blob([text],{type:'text/plain'})
+      })]).then(function(){done('Copiée ✓');}, fallback);
+    } else { fallback(); }
+  }catch(e){ fallback(); }
+}
+</script>
+</body>
+</html>
